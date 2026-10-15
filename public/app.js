@@ -10,6 +10,7 @@ import {
 import { World, drawMap } from "./world.js";
 import { AudioEngine } from "./audio.js";
 import { TRACKS } from "./tracks.js";
+import { RENDER_VERSION, normalizeQuality } from "./render-settings.js";
 
 const $ = (id) => document.getElementById(id);
 const audio = new AudioEngine();
@@ -134,11 +135,13 @@ $("track-select").addEventListener("change", (e) => {
   }
 });
 function qualityChange(value) {
+  value = normalizeQuality(value);
   world?.setQuality(value);
   $("quality-select").value = value;
   $("race-quality-select").value = value;
   try {
     localStorage.setItem("kart-quality", value);
+    localStorage.setItem("kart-render-version", RENDER_VERSION);
   } catch {
     /* Facultatif. */
   }
@@ -688,15 +691,17 @@ async function init() {
     } catch {
       THREE = await import("/vendor/three.module.js");
     }
-    world = new World(THREE, $("world"));
-    world.color = selectedColor;
-    world.setTrack(selectedTrack);
-    let quality = innerWidth < 600 ? "balanced" : "high";
+    let quality = "low";
     try {
-      quality = localStorage.getItem("kart-quality") || quality;
+      // L'ancien réglage ne réduisait pas la scène. Démarrer la nouvelle
+      // version en mode léger, puis mémoriser les choix explicites du joueur.
+      if (localStorage.getItem("kart-render-version") === RENDER_VERSION)
+        quality = normalizeQuality(localStorage.getItem("kart-quality"));
     } catch {
       /* Facultatif. */
     }
+    world = new World(THREE, $("world"), { quality, trackId: selectedTrack });
+    world.color = selectedColor;
     qualityChange(quality);
     document.body.dataset.webgl = "ready";
     document.body.dataset.phase = "home";
@@ -723,6 +728,8 @@ function frame(now) {
   const elapsed = Math.max(0, (now - lastTime) / 1000);
   lastTime = now;
   const input = getInput();
+  if (!document.hidden && mode === "race" && !paused && !resultsShown)
+    world.noteFrame(elapsed, now);
   if (mode === "race" && race) {
     if (!online && !paused && !$("help-dialog").open) {
       // Le rendu peut ralentir ; le temps de course et le rappel de 2,5 s

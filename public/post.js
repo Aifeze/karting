@@ -42,14 +42,29 @@ export class PostProcessing {
         tint: { value: new T.Vector3(1, 1, 1) },
       },
     );
-    const type = renderer.extensions.has("EXT_color_buffer_float")
+    this.type = renderer.extensions.has("EXT_color_buffer_float")
       ? T.HalfFloatType
       : T.UnsignedByteType;
-    this.main = new T.WebGLRenderTarget(1, 1, { type, depthBuffer: true });
-    this.a = new T.WebGLRenderTarget(1, 1, { type, depthBuffer: false });
-    this.b = this.a.clone();
+    this.main = this.a = this.b = null;
   }
   resize(width, height, ratio, quality) {
+    this.enabled = quality !== "low";
+    if (!this.enabled) {
+      for (const target of [this.main, this.a, this.b]) target?.dispose();
+      this.main = this.a = this.b = null;
+      return;
+    }
+    if (!this.main) {
+      this.main = new this.T.WebGLRenderTarget(1, 1, {
+        type: this.type,
+        depthBuffer: true,
+      });
+      this.a = new this.T.WebGLRenderTarget(1, 1, {
+        type: this.type,
+        depthBuffer: false,
+      });
+      this.b = this.a.clone();
+    }
     const samples = quality === "high" ? 4 : 0;
     if (this.main.samples !== samples) {
       this.main.dispose();

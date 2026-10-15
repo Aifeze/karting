@@ -57,9 +57,11 @@ Trente-deux portes par tour doivent être franchies dans l’ordre. Les croiseme
 
 ### Rendu
 
-Le mode **Cinéma**, sélectionné par défaut sur ordinateur, active le rendu HDR, l’antialiasing MSAA 4×, un bloom extrait en demi-flottant puis flouté à résolution réduite, un étalonnage ACES avec saturation et teinte par circuit, et un vignettage léger. Les ombres PCF douces de 2 048 pixels suivent la zone du kart. L’asphalte utilise une texture procédurale de 2 048 × 2 048 pixels avec relief et filtrage anisotrope. Éclairages et matériaux émissifs, eau, lave, aurores et particules sont animés.
+Le jeu démarre en **Léger**, y compris après une mise à jour de l’ancien réglage. Ce profil utilise une scène simplifiée : matériaux Lambert, aucune lumière ponctuelle, aucun bloom ni ombre, textures plafonnées à 256 pixels, végétation espacée, moins de bâtiments et une résolution interne de 420 000 pixels au maximum, même sur un écran 4K. Les pièces fixes des karts et les cases de départ sont regroupées ; les décors sont découpés par zone et masqués à distance. Les flous du HUD sont coupés en léger. Le tracé, la conduite, les objets et les délais de rappel sont identiques dans tous les profils.
 
-Les réglages **Équilibré** (par défaut sur mobile) et **Léger** sont disponibles dans l’accueil et la pause. Équilibré conserve HDR, bloom et étalonnage avec une résolution et des ombres réduites ; Léger utilise le rendu ACES direct, sans bloom ni ombres. Le choix est mémorisé. Les instances regroupent bâtiments, arbres, rochers et marquages pour limiter les appels de rendu, et les ressources du circuit précédent sont libérées lors d’un changement.
+Si la fréquence d’affichage reste faible, le mode léger réduit progressivement sa résolution interne, jusqu’à environ 160 000 pixels sur un grand écran. Ce réglage ne ralentit pas la simulation. Les ressources du bloom sont libérées lorsque vous revenez en léger ; le changement de profil reconstruit réellement la scène, sans recharger la page.
+
+**Équilibré** et **Cinéma** restent disponibles dans l’accueil et la pause pour les GPU plus rapides. Ils conservent le HDR, le bloom et l’étalonnage ACES, avec des plafonds de résolution, de textures et de densité distincts. Le choix est mémorisé. Le contexte WebGL démarre sans MSAA imposé : l’antialiasing supplémentaire est réservé au mode Cinéma.
 
 ### Objets et piste
 
@@ -106,9 +108,12 @@ Le plan gratuit peut mettre le service en veille et demander un temps de réveil
 ```sh
 npm test
 npm run test:browser
+npm run test:performance
 ```
 
 `npm test` vérifie les quatre tracés, la direction sans assistance, la glisse, les objets, les interactions de piste, le croisement à deux niveaux, les checkpoints, le délai de rappel à 30/60 Hz, quatre courses complètes et un salon Socket.io à deux clients avec choix du circuit et rappel chronométré. Le test navigateur vérifie l’accueil, l’aide, la conduite, la pause, un salon à deux pages et l’interface mobile. Il vérifie aussi le repli local de Three.js lorsque le CDN est bloqué, le rappel dans l’interface, la synchronisation du circuit et les quatre environnements avec leur post-traitement.
+
+`npm run test:performance` mesure les intervalles d’affichage dans Chromium avec rendu logiciel, sur trois vues de chacun des quatre circuits. Il vérifie aussi les budgets du mode léger : moins de 40 000 triangles visibles, 160 appels de dessin et 420 000 pixels. Les timings dépendent de la machine et ne prédisent pas le nombre d’images par seconde sur votre appareil. `KART_BENCH_REF=<commit> npm run test:performance` permet de comparer un ancien rendu en conservant les mêmes vues.
 
 Le test navigateur utilise `/usr/bin/chromium` s’il est disponible. Sinon, exécutez `npx playwright install chromium`, ou définissez `CHROMIUM_PATH` vers votre exécutable. Les captures sont enregistrées dans `test-results/` (ignoré par Git).
 

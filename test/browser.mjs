@@ -50,6 +50,11 @@ try {
     "le formulaire entier reste dans la fenêtre",
   );
   await a.screenshot({ path: "test-results/home.png" });
+  assert.equal(await a.getAttribute("body", "data-quality"), "low");
+  assert.ok(
+    await a.locator("#world").evaluate((c) => c.width * c.height <= 420000),
+    "résolution plafonnée dès le premier affichage",
+  );
   await a.locator("#quality-select").selectOption("balanced");
   for (const id of ["neon", "volcano", "alpine"]) {
     await a.locator("#track-select").selectOption(id);
@@ -57,6 +62,11 @@ try {
     await a.screenshot({ path: `test-results/track-${id}.png` });
   }
   await a.locator("#quality-select").selectOption("low");
+  await a.setViewportSize({ width: 3840, height: 2160 });
+  assert.ok(
+    await a.locator("#world").evaluate((c) => c.width * c.height <= 420000),
+    "un écran 4K ne doit pas forcer un rendu 4K en léger",
+  );
   await a.setViewportSize({ width: 1100, height: 760 });
   await a.getByRole("button", { name: "Afficher les commandes" }).click();
   assert.ok(await a.locator("#help-dialog").isVisible());
@@ -76,6 +86,9 @@ try {
   assert.equal(await a.locator("#respawn-overlay").isVisible(), false);
   await a.keyboard.press("Escape");
   assert.ok(await a.locator("#pause-screen").isVisible());
+  await a.locator("#race-quality-select").selectOption("balanced");
+  await a.locator("#race-quality-select").selectOption("low");
+  assert.equal(await a.getAttribute("body", "data-quality"), "low");
   await a.locator("#resume").click();
   await a.locator("#pause-button").click();
   await a.locator("#quit-race").click();

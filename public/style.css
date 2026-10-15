@@ -2100,3 +2100,25 @@ body.racing .hud {
     margin-top: 11px;
   }
 }
+/* Le mode léger évite aussi les captures et flous du compositeur CSS. */
+body[data-quality="low"] .play-card,
+body[data-quality="low"] .track-card,
+body[data-quality="low"] .minimap-wrap,
+body[data-quality="low"] .round-button,
+body[data-quality="low"] .sound-button,
+body[data-quality="low"] .touch-controls button,
+body[data-quality="low"] .overlay {
+  backdrop-filter: none;
+}
+body[data-quality="low"] .play-card,
+body[data-quality="low"] .track-card {
+  background: #f5f1e9f5;
+}
+body[data-quality="low"].racing:after {
+  box-shadow: none;
+}
+body[data-quality="low"] .boost-fx {
+  background: none;
+  mask-image: none;
+  box-shadow: inset 0 0 35px 8px #5be9ed55;
+}

@@ -8,13 +8,24 @@ import {
   clamp,
 } from "./shared.js";
 import { PostProcessing } from "./post.js";
+import {
+  RENDER_PROFILES,
+  normalizeQuality,
+  renderRatio,
+} from "./render-settings.js";
 
 export class World {
-  constructor(T, canvas) {
+  constructor(T, canvas, options = {}) {
     this.T = T;
+    this.quality = normalizeQuality(options.quality);
+    this.detail = RENDER_PROFILES[this.quality];
+    this.distanceGroups = [];
+    this.resolutionScale = 1;
+    this.frameAverage = 0;
+    this.lastAdaptation = 0;
     this.renderer = new T.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: false,
       powerPreference: "high-performance",
     });
     this.renderer.outputColorSpace = T.SRGBColorSpace;
@@ -56,36 +67,51 @@ export class World {
     this.boostLight = new T.PointLight("#77edff", 0, 13, 2);
     this.camera.add(this.boostLight);
     this.boostLight.position.set(0, 0, -2);
+    this.buildingCockpit = true;
     this.buildCockpit();
+    this.mergeLocalMeshes(this.wheel);
+    this.mergeLocalMeshes(this.cockpit);
+    this.buildingCockpit = false;
     this.protectedMaterials = new Set();
     this.camera.traverse((o) => {
       if (o.material) this.protectedMaterials.add(o.material);
     });
     this.post = new PostProcessing(T, this.renderer);
-    this.setQuality(innerWidth < 600 ? "balanced" : "high");
-    this.setTrack("sunset");
+    this.setQuality(this.quality);
+    this.setTrack(options.trackId || "sunset");
     window.addEventListener("resize", () => this.resize());
   }
   setQuality(quality) {
-    this.quality = ["high", "balanced", "low"].includes(quality)
-      ? quality
-      : "balanced";
+    const previous = this.quality;
+    this.quality = normalizeQuality(quality);
+    this.detail = RENDER_PROFILES[this.quality];
+    this.resolutionScale = 1;
+    this.frameAverage = 0;
+    this.lastAdaptation = 0;
     this.renderer.shadowMap.enabled = this.quality !== "low";
     this.sun.shadow.mapSize.set(
-      this.quality === "high" ? 2048 : 1024,
-      this.quality === "high" ? 2048 : 1024,
+      this.quality === "high" ? 1024 : 512,
+      this.quality === "high" ? 1024 : 512,
     );
     if (this.sun.shadow.map) {
       this.sun.shadow.map.dispose();
       this.sun.shadow.map = null;
     }
     this.resize();
+    this.camera.traverse((o) => {
+      if (o.isPointLight) o.visible = this.quality !== "low";
+    });
+    if (this.track && previous !== this.quality)
+      this.setTrack(this.track.id, true);
     document.body.dataset.quality = this.quality;
   }
   resize() {
-    const ratio = Math.min(
+    const ratio = renderRatio(
+      innerWidth,
+      innerHeight,
       devicePixelRatio,
-      this.quality === "high" ? 1.75 : this.quality === "balanced" ? 1.25 : 1,
+      this.quality,
+      this.resolutionScale,
     );
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(innerWidth, innerHeight);
@@ -93,9 +119,31 @@ export class World {
     this.camera.updateProjectionMatrix();
     this.post.resize(innerWidth, innerHeight, ratio, this.quality);
   }
-  setTrack(id) {
+  noteFrame(seconds, now) {
+    if (this.quality !== "low" || seconds > 1) return;
+    this.frameAverage = this.frameAverage
+      ? this.frameAverage * 0.94 + seconds * 0.06
+      : seconds;
+    if (!this.lastAdaptation) {
+      this.lastAdaptation = now;
+      return;
+    }
+    if (now - this.lastAdaptation < 2500 || this.frameAverage < 0.038) return;
+    const ratio = renderRatio(innerWidth, innerHeight, devicePixelRatio, "low");
+    const floor = Math.min(
+      1,
+      Math.sqrt(160000 / (innerWidth * innerHeight * ratio * ratio)),
+    );
+    const next = Math.max(floor, this.resolutionScale * 0.85);
+    if (next < this.resolutionScale - 0.01) {
+      this.resolutionScale = next;
+      this.resize();
+    }
+    this.lastAdaptation = now;
+  }
+  setTrack(id, force = false) {
     const track = getTrack(id);
-    if (this.track?.id === track.id) return;
+    if (!force && this.track?.id === track.id) return;
     const geometries = new Set(),
       materials = new Set(),
       textures = new Set();
@@ -115,6 +163,7 @@ export class World {
     textures.forEach((t) => t.dispose());
     materials.forEach((m) => m.dispose());
     this.level.clear();
+    this.distanceGroups = [];
     this.materials.clear();
     this.karts.clear();
     this.hazardMeshes.clear();
@@ -127,7 +176,11 @@ export class World {
     this.scene.background = new this.T.Color(track.sky);
     this.scene.fog = new this.T.FogExp2(
       track.fog,
-      track.theme === "city" ? 0.0022 : 0.0016,
+      this.quality === "low"
+        ? 0.009
+        : this.quality === "balanced"
+          ? 0.0055
+          : 0.0035,
     );
     this.hemi.color.set(
       track.theme === "city"
@@ -152,9 +205,79 @@ export class World {
     if (!this.materials.has(key))
       this.materials.set(
         key,
-        new this.T.MeshStandardMaterial({ color, roughness: 0.75, ...options }),
+        this.litMaterial({ color, roughness: 0.75, ...options }),
       );
     return this.materials.get(key);
+  }
+  litMaterial(options) {
+    if (this.quality !== "low" && !this.buildingCockpit)
+      return new this.T.MeshStandardMaterial(options);
+    const {
+      roughness,
+      metalness,
+      bumpMap,
+      bumpScale,
+      normalMap,
+      normalScale,
+      roughnessMap,
+      metalnessMap,
+      ...simple
+    } = options;
+    return new this.T.MeshLambertMaterial(simple);
+  }
+  registerDistance(object, x, z, radius = 0) {
+    this.distanceGroups.push({ object, x, z, radius });
+    return object;
+  }
+  // Regrouper les pièces fixes d'un kart réduit les appels de dessin tout en
+  // gardant le volant dans son propre groupe animé et les couleurs modifiables.
+  mergeLocalMeshes(group) {
+    const T = this.T,
+      batches = new Map(),
+      oldGeometry = new Set();
+    for (const mesh of [...group.children]) {
+      if (!mesh.isMesh || mesh.isInstancedMesh || Array.isArray(mesh.material))
+        continue;
+      mesh.updateMatrix();
+      if (!batches.has(mesh.material))
+        batches.set(mesh.material, {
+          positions: [],
+          normals: [],
+          uvs: [],
+          shadows: false,
+        });
+      const b = batches.get(mesh.material),
+        g = mesh.geometry,
+        position = g.attributes.position,
+        normal = g.attributes.normal,
+        uv = g.attributes.uv;
+      const transform = new T.Matrix3().getNormalMatrix(mesh.matrix),
+        v = new T.Vector3(),
+        n = new T.Vector3();
+      for (let k = 0; k < (g.index?.count || position.count); k++) {
+        const i = g.index ? g.index.getX(k) : k;
+        v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrix);
+        b.positions.push(v.x, v.y, v.z);
+        if (normal)
+          n.fromBufferAttribute(normal, i).applyNormalMatrix(transform);
+        else n.set(0, 1, 0);
+        b.normals.push(n.x, n.y, n.z);
+        b.uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+      }
+      b.shadows ||= mesh.castShadow;
+      group.remove(mesh);
+      oldGeometry.add(g);
+    }
+    for (const [material, b] of batches) {
+      const g = new T.BufferGeometry();
+      g.setAttribute("position", new T.Float32BufferAttribute(b.positions, 3));
+      g.setAttribute("normal", new T.Float32BufferAttribute(b.normals, 3));
+      g.setAttribute("uv", new T.Float32BufferAttribute(b.uvs, 2));
+      const mesh = new T.Mesh(g, material);
+      mesh.castShadow = b.shadows;
+      group.add(mesh);
+    }
+    oldGeometry.forEach((g) => g.dispose());
   }
   mesh(geo, material, x = 0, y = 0, z = 0, parent = this.level) {
     const m = new this.T.Mesh(geo, material);
@@ -174,15 +297,43 @@ export class World {
   }
   texture(draw, width = 512, height = 512) {
     const c = document.createElement("canvas");
-    c.width = width;
-    c.height = height;
-    draw(c.getContext("2d"), width, height);
+    const scale = Math.min(1, this.detail.texture / Math.max(width, height));
+    c.width = Math.max(1, Math.round(width * scale));
+    c.height = Math.max(1, Math.round(height * scale));
+    const ctx = c.getContext("2d");
+    // Les dessins utilisent leurs dimensions logiques, même sur une petite texture.
+    ctx.scale(scale, scale);
+    draw(ctx, width, height);
     const t = new this.T.CanvasTexture(c);
     t.colorSpace = this.T.SRGBColorSpace;
-    t.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    t.anisotropy = Math.min(
+      this.detail.anisotropy,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
     return t;
   }
-  instances(geo, material, transforms, shadows = true) {
+  instances(geo, material, transforms, shadows = true, chunk = true) {
+    if (chunk && transforms.length > 12) {
+      const cells = new Map();
+      for (const t of transforms) {
+        const size = this.quality === "low" ? 128 : 96;
+        const key = `${Math.floor(t.p[0] / size)},${Math.floor(t.p[2] / size)}`;
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(t);
+      }
+      for (const batch of cells.values()) {
+        const mesh = this.instances(geo, material, batch, shadows, false);
+        mesh.computeBoundingSphere();
+        const b = mesh.boundingSphere;
+        this.registerDistance(
+          mesh,
+          b.center.x,
+          b.center.z,
+          Math.min(100, b.radius),
+        );
+      }
+      return;
+    }
     const T = this.T,
       m = new T.InstancedMesh(geo, material, transforms.length),
       d = new T.Object3D();
@@ -202,6 +353,7 @@ export class World {
   buildSky() {
     const T = this.T,
       t = this.track;
+    if (this.quality === "low") return;
     const sky = new T.ShaderMaterial({
       side: T.BackSide,
       depthWrite: false,
@@ -233,7 +385,7 @@ export class World {
     );
     if (t.theme === "city" || t.theme === "snow") {
       const stars = [];
-      for (let i = 0; i < 850; i++) {
+      for (let i = 0; i < (this.quality === "low" ? 150 : 450); i++) {
         const a = i * 2.399,
           rad = 650 + Math.sin(i) * 150;
         stars.push(
@@ -256,7 +408,7 @@ export class World {
         ),
       );
     }
-    if (t.theme === "snow") {
+    if (t.theme === "snow" && this.quality !== "low") {
       const mat = new T.ShaderMaterial({
         transparent: true,
         depthWrite: false,
@@ -282,7 +434,7 @@ export class World {
     const T = this.T;
     const tex = this.texture(
       (ctx, w, h) => {
-        const image = ctx.createImageData(w, h);
+        const image = ctx.createImageData(ctx.canvas.width, ctx.canvas.height);
         let seed = 9187;
         for (let i = 0; i < image.data.length; i += 4) {
           seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -307,7 +459,7 @@ export class World {
       2048,
     );
     tex.wrapS = tex.wrapT = T.RepeatWrapping;
-    return new T.MeshStandardMaterial({
+    return this.litMaterial({
       color: this.track.road,
       map: tex,
       bumpMap: tex,
@@ -327,7 +479,7 @@ export class World {
       vs = [],
       uvs = [],
       indices = [],
-      count = Math.ceil(this.track.length / 2.5);
+      count = Math.ceil(this.track.length / this.detail.roadStep);
     for (let i = 0; i <= count; i++) {
       const s = (i / count) * this.track.length;
       for (const offset of [from, to]) {
@@ -460,20 +612,23 @@ export class World {
       ),
       supports,
     );
+    const checkerboard = [];
     for (let row = 0; row < 4; row++)
       for (let col = 0; col < 12; col++) {
         const p = t.at(row * 0.75, (col - 5.5) * (t.width / 12));
-        const m = this.box(
-          t.width / 12,
-          0.02,
-          0.75,
-          (row + col) % 2 ? "#fff5de" : "#151a31",
-          p.x,
-          p.y + 0.065,
-          p.z,
-        );
-        m.rotation.set(0, p.heading, -p.bank);
+        checkerboard.push({
+          p: [p.x, p.y + 0.065, p.z],
+          r: [0, p.heading, -p.bank],
+          s: [t.width / 12, 0.02, 0.75],
+          c: (row + col) % 2 ? "#fff5de" : "#151a31",
+        });
       }
+    this.instances(
+      new T.BoxGeometry(1, 1, 1),
+      this.mat("#ffffff"),
+      checkerboard,
+      false,
+    );
     this.buildGate();
     const tex = this.texture((ctx, w, h) => {
       ctx.fillStyle = "#f8bc50";
@@ -486,7 +641,7 @@ export class World {
       ctx.textAlign = "center";
       ctx.fillText("?", w / 2, h * 0.8);
     });
-    const material = new T.MeshStandardMaterial({
+    const material = this.litMaterial({
       map: tex,
       color: "#ffffff",
       emissive: "#f5b84c",
@@ -528,7 +683,7 @@ export class World {
       const p = t.at(pad.s, pad.offset);
       const m = this.mesh(
         new T.PlaneGeometry(4.5, 7),
-        new T.MeshStandardMaterial({
+        this.litMaterial({
           map: padTex,
           emissiveMap: padTex,
           emissive: "#78ffff",
@@ -589,7 +744,7 @@ export class World {
       this.box(0.18, 4, 0.18, "#6b7382", x, 2, 0, g);
     this.mesh(
       new T.BoxGeometry(width, height, 0.25),
-      new T.MeshStandardMaterial({
+      this.litMaterial({
         map: tex,
         emissiveMap: tex,
         emissive: "#ffffff",
@@ -601,7 +756,7 @@ export class World {
       g,
     );
     this.level.add(g);
-    return g;
+    return this.registerDistance(g, p.x, p.z, width);
   }
   buildGate() {
     const T = this.T,
@@ -631,7 +786,7 @@ export class World {
     for (const side of [-1, 1]) {
       const m = this.mesh(
         new T.PlaneGeometry(t.width + 2.7, 1.85),
-        new T.MeshStandardMaterial({
+        this.litMaterial({
           map: tex,
           emissiveMap: tex,
           emissive: "#ffffff",
@@ -674,7 +829,13 @@ export class World {
   }
   cliffGeometry() {
     const T = this.T,
-      g = new T.CylinderGeometry(1, 0.52, 1, 16, 7),
+      g = new T.CylinderGeometry(
+        1,
+        0.52,
+        1,
+        this.quality === "low" ? 7 : 12,
+        this.quality === "low" ? 2 : 4,
+      ),
       p = g.attributes.position;
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i),
@@ -692,6 +853,8 @@ export class World {
     const T = this.T,
       tex = this.texture(
         (ctx, w, h) => {
+          w = ctx.canvas.width;
+          h = ctx.canvas.height;
           const data = ctx.createImageData(w, h);
           let seed = 324;
           for (let y = 0; y < h; y++)
@@ -713,7 +876,7 @@ export class World {
         2048,
       );
     tex.wrapS = tex.wrapT = T.RepeatWrapping;
-    return new T.MeshStandardMaterial({
+    return this.litMaterial({
       color: "#ffffff",
       map: tex,
       bumpMap: tex,
@@ -723,7 +886,14 @@ export class World {
   }
   roundedGeo(w, h, d, r) {
     const T = this.T,
-      g = new T.BoxGeometry(w, h, d, 6, 4, 6),
+      g = new T.BoxGeometry(
+        w,
+        h,
+        d,
+        this.quality === "low" ? 2 : 4,
+        2,
+        this.quality === "low" ? 2 : 4,
+      ),
       p = g.attributes.position,
       n = g.attributes.normal;
     for (let i = 0; i < p.count; i++) {
@@ -780,8 +950,8 @@ export class World {
       );
     if (t.theme === "city") this.buildCity(noise);
     else {
-      for (let i = 0; i < Math.ceil(t.length / 9); i++) {
-        const s = i * 9,
+      for (let i = 0; i < Math.ceil(t.length / this.detail.sceneryStep); i++) {
+        const s = i * this.detail.sceneryStep,
           side = i % 2 ? 1 : -1,
           p = t.at(s, side * (t.halfWidth + 8 + noise(i) * 13)),
           size = 4 + noise(i + 1) * 5;
@@ -809,8 +979,8 @@ export class World {
             s: [0.5, h, 0.5],
             r: [0.08 * side, 0, 0.08],
           });
-          for (let j = 0; j < 7; j++) {
-            const a = (j / 7) * TAU + i;
+          for (let j = 0; j < (this.quality === "low" ? 5 : 7); j++) {
+            const a = (j / (this.quality === "low" ? 5 : 7)) * TAU + i;
             crowns.push({
               p: [p.x, p.y - 4 + h + Math.sin(j) * 0.2, p.z],
               s: [0.9 + noise(j + i) * 0.2, 1, 1],
@@ -818,7 +988,7 @@ export class World {
               c: j % 2 ? "#327d6c" : "#6aa276",
             });
           }
-          for (let j = 0; j < 4; j++)
+          for (let j = 0; j < (this.quality === "low" ? 1 : 3); j++)
             plants.push({
               p: [
                 p.x + (noise(i + j * 2) - 0.5) * 7,
@@ -910,20 +1080,23 @@ export class World {
     if (t.theme === "coast") {
       const sea = this.mesh(
         new T.PlaneGeometry(3000, 3000, 1, 1),
-        new T.ShaderMaterial({
-          uniforms: { time: { value: 0 } },
-          vertexShader:
-            "varying vec2 uv0;void main(){uv0=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
-          fragmentShader:
-            "varying vec2 uv0;uniform float time;void main(){float wave=sin(uv0.x*500.+time*.8)*sin(uv0.y*600.-time*.6);vec3 c=mix(vec3(.025,.22,.3),vec3(.08,.45,.48),wave*.25+.5);c+=pow(max(0.,wave),12.)*.08;gl_FragColor=vec4(c,1.);}",
-          side: T.DoubleSide,
-        }),
+        this.quality === "low"
+          ? new T.MeshBasicMaterial({ color: "#408e9e", side: T.DoubleSide })
+          : new T.ShaderMaterial({
+              uniforms: { time: { value: 0 } },
+              vertexShader:
+                "varying vec2 uv0;void main(){uv0=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
+              fragmentShader:
+                "varying vec2 uv0;uniform float time;void main(){float wave=sin(uv0.x*500.+time*.8)*sin(uv0.y*600.-time*.6);vec3 c=mix(vec3(.025,.22,.3),vec3(.08,.45,.48),wave*.25+.5);c+=pow(max(0.,wave),12.)*.08;gl_FragColor=vec4(c,1.);}",
+              side: T.DoubleSide,
+            }),
         0,
         -34,
         0,
       );
       sea.rotation.x = -Math.PI / 2;
-      this.animated.push({ type: "shader", material: sea.material });
+      if (sea.material.uniforms)
+        this.animated.push({ type: "shader", material: sea.material });
       const arches = [];
       for (let i = 0; i < 12; i++) {
         const p = t.at((i / 12) * t.length, t.halfWidth + 30);
@@ -967,14 +1140,17 @@ export class World {
       }
     }
     if (t.theme === "lava") {
-      const lavaMat = new T.ShaderMaterial({
-        uniforms: { time: { value: 0 } },
-        vertexShader:
-          "varying vec2 uv0;void main(){uv0=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
-        fragmentShader:
-          "varying vec2 uv0;uniform float time;void main(){vec2 p=uv0*90.;float n=sin(p.x+sin(p.y*1.7+time*.2)*2.)*sin(p.y+sin(p.x*1.3-time*.12)*2.);float crust=smoothstep(.05,.26,abs(n));vec3 c=mix(vec3(3.,.8,.07),vec3(.16,.035,.025),crust);gl_FragColor=vec4(c,1.);}",
-        side: T.DoubleSide,
-      });
+      const lavaMat =
+        this.quality === "low"
+          ? new T.MeshBasicMaterial({ color: "#ce5b2b", side: T.DoubleSide })
+          : new T.ShaderMaterial({
+              uniforms: { time: { value: 0 } },
+              vertexShader:
+                "varying vec2 uv0;void main(){uv0=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
+              fragmentShader:
+                "varying vec2 uv0;uniform float time;void main(){vec2 p=uv0*90.;float n=sin(p.x+sin(p.y*1.7+time*.2)*2.)*sin(p.y+sin(p.x*1.3-time*.12)*2.);float crust=smoothstep(.05,.26,abs(n));vec3 c=mix(vec3(3.,.8,.07),vec3(.16,.035,.025),crust);gl_FragColor=vec4(c,1.);}",
+              side: T.DoubleSide,
+            });
       const lava = this.mesh(
         new T.PlaneGeometry(2200, 2200),
         lavaMat,
@@ -983,15 +1159,19 @@ export class World {
         0,
       );
       lava.rotation.x = -Math.PI / 2;
-      this.animated.push({ type: "shader", material: lavaMat });
-      for (let i = 0; i < 7; i++) {
-        const p = t.at((i / 7) * t.length, 45);
+      if (lavaMat.uniforms)
+        this.animated.push({ type: "shader", material: lavaMat });
+      for (let i = 0; i < this.detail.lights; i++) {
+        const p = t.at((i / this.detail.lights) * t.length, 45);
         const light = new T.PointLight("#ff5c1a", 160, 85, 2);
         light.position.set(p.x, p.y - 8, p.z);
         this.level.add(light);
       }
     }
-    if (t.theme === "city" || t.theme === "lava" || t.theme === "snow")
+    if (
+      this.detail.weather &&
+      (t.theme === "city" || t.theme === "lava" || t.theme === "snow")
+    )
       this.buildAtmosphere();
     if (t.theme === "city")
       for (const side of [-1, 1])
@@ -1034,7 +1214,7 @@ export class World {
       2048,
       2048,
     );
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < this.detail.buildings; i++) {
       const x = (noise(i + 1) - 0.5) * 850,
         z = (noise(i + 500) - 0.5) * 850,
         p = projectTrack(t, x, 15, z);
@@ -1052,7 +1232,7 @@ export class World {
     }
     this.instances(
       new T.BoxGeometry(1, 1, 1),
-      new T.MeshStandardMaterial({
+      this.litMaterial({
         map: tex,
         color: "#a9baca",
         emissiveMap: tex,
@@ -1063,8 +1243,11 @@ export class World {
       }),
       buildings,
     );
-    for (let i = 0; i < 12; i++) {
-      const p = t.at(((i + 0.4) / 12) * t.length, t.halfWidth + 8);
+    for (let i = 0; i < (this.quality === "low" ? 4 : 8); i++) {
+      const p = t.at(
+        ((i + 0.4) / (this.quality === "low" ? 4 : 8)) * t.length,
+        t.halfWidth + 8,
+      );
       this.sign(
         p,
         ["MIDNIGHT", "OVERDRIVE", "KART CLUB", "APEX / 24"][i % 4],
@@ -1073,10 +1256,15 @@ export class World {
         4.5,
       );
     }
-    for (let i = 0; i < 8; i++) {
-      const p = t.at((i / 8) * t.length);
+    for (let i = 0; i < (this.quality === "low" ? 3 : 6); i++) {
+      const p = t.at((i / (this.quality === "low" ? 3 : 6)) * t.length);
       const ring = this.mesh(
-        new T.TorusGeometry(t.halfWidth + 4, 0.19, 8, 64),
+        new T.TorusGeometry(
+          t.halfWidth + 4,
+          0.19,
+          5,
+          this.quality === "low" ? 24 : 48,
+        ),
         this.mat("#8affff", { emissive: "#4ff5ed", emissiveIntensity: 3 }),
         p.x,
         p.y + 5,
@@ -1097,7 +1285,7 @@ export class World {
     const T = this.T,
       positions = [],
       t = this.track;
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < this.detail.weather; i++) {
       positions.push(
         Math.sin(i * 18.3) * 420,
         Math.abs(Math.sin(i * 7.12)) * 180 - 10,
@@ -1124,7 +1312,7 @@ export class World {
   makeKart(color, name = "") {
     const T = this.T,
       kart = new T.Group();
-    const paint = new T.MeshStandardMaterial({
+    const paint = this.litMaterial({
       color,
       roughness: 0.4,
       metalness: 0.15,
@@ -1150,7 +1338,7 @@ export class World {
     this.box(1.95, 0.14, 0.2, "#343c4b", 0, 0.38, -1.43, kart);
     this.box(1.8, 0.16, 0.55, color, 0, 1.02, -1.28, kart);
     this.box(0.78, 0.85, 0.48, "#343c4b", 0, 1.03, -0.3, kart);
-    const tireGeo = new T.CylinderGeometry(0.39, 0.39, 0.35, 32);
+    const tireGeo = new T.CylinderGeometry(0.39, 0.39, 0.35, 12);
     for (const x of [-0.94, 0.94])
       for (const z of [-0.92, 0.98]) {
         const tire = this.mesh(tireGeo, this.mat("#303846"), x, 0.4, z, kart);
@@ -1167,7 +1355,7 @@ export class World {
         hub.rotation.z = Math.PI / 2;
       }
     this.mesh(
-      new T.SphereGeometry(0.46, 32, 24),
+      new T.SphereGeometry(0.46, this.quality === "low" ? 12 : 20, 10),
       this.mat(color),
       0,
       1.64,
@@ -1223,6 +1411,7 @@ export class World {
       kart.add(label);
     }
     kart.userData.paint = paint;
+    this.mergeLocalMeshes(kart);
     this.level.add(kart);
     return kart;
   }
@@ -1232,7 +1421,7 @@ export class World {
     this.camera.add(this.cockpit);
     this.nose = this.mesh(
       this.roundedGeo(0.85, 0.18, 1.5, 0.08),
-      new T.MeshStandardMaterial({
+      this.litMaterial({
         color: COLORS[0],
         roughness: 0.4,
         metalness: 0.15,
@@ -1400,8 +1589,8 @@ export class World {
   }
   buildParticles() {
     const T = this.T;
-    this.particlePositions = new Float32Array(360 * 3);
-    this.particleColors = new Float32Array(360 * 3);
+    this.particlePositions = new Float32Array(this.detail.particles * 3);
+    this.particleColors = new Float32Array(this.detail.particles * 3);
     const g = new T.BufferGeometry();
     g.setAttribute(
       "position",
@@ -1433,7 +1622,7 @@ export class World {
       life: 0.3 + Math.random() * 0.5,
       color: boosting || p.drift > 1.8 ? [0.3, 1, 1] : [1, 0.55, 0.1],
     });
-    if (this.particles.length > 360) this.particles.shift();
+    if (this.particles.length > this.detail.particles) this.particles.shift();
   }
   setMode(mode, color = COLORS[0]) {
     this.mode = mode;
@@ -1623,6 +1812,18 @@ export class World {
     this.sun.target.updateMatrixWorld();
     this.cameraReady = true;
     this.camera.updateProjectionMatrix();
+    // Les lots d'instances sont découpés par zone pour ne pas dessiner toute
+    // la carte lorsque seul un virage est visible.
+    const distance = this.detail.distance;
+    for (const group of this.distanceGroups) {
+      const dx = group.x - this.camera.position.x,
+        dz = group.z - this.camera.position.z;
+      group.object.visible = dx * dx + dz * dz < (distance + group.radius) ** 2;
+    }
+    for (const b of this.crates)
+      b.group.visible =
+        b.group.position.distanceToSquared(this.camera.position) <
+        distance * distance;
     this.post.render(this.scene, this.camera);
   }
 }
