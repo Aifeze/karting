@@ -18,12 +18,12 @@
   <body>
     <canvas
       id="world"
-      aria-label="Circuit de karting 3D Sunset Island"
+      aria-label="Circuit de karting 3D Sunset Cliffs"
     ></canvas>
     <div id="loading" class="loading">
       <span class="brand-mark">K<span>→</span></span
       ><strong>On chauffe les pneus<span class="loading-dots">…</span></strong
-      ><small>Direction Sunset Island</small>
+      ><small>Quatre circuits. Aucune assistance.</small>
     </div>
     <header id="header" class="header">
       <a class="wordmark" href="/" aria-label="Kart Club, accueil"
@@ -34,6 +34,14 @@
         <span class="live-dot"></span> DU FUN. SANS TÉLÉCHARGEMENT.
       </div>
       <div class="header-actions">
+        <label class="quality-control"
+          ><span>RENDU</span
+          ><select id="quality-select" aria-label="Qualité graphique">
+            <option value="high">Cinéma</option>
+            <option value="balanced">Équilibré</option>
+            <option value="low">Léger</option>
+          </select></label
+        >
         <button
           id="help-button"
           class="round-button"
@@ -68,6 +76,10 @@
           commence ici.
         </p>
         <div class="play-card">
+          <label class="track-select-row" for="track-select"
+            ><span>CIRCUIT <b>04 DESTINATIONS</b></span
+            ><select id="track-select" aria-label="Choisir le circuit"></select
+          ></label>
           <div class="profile-row">
             <label class="name-field" for="nickname"
               ><span>VOTRE PSEUDO</span
@@ -128,10 +140,10 @@
       </section>
       <aside class="track-card">
         <div class="track-card-top">
-          <span class="track-index">CIRCUIT 01</span
+          <span id="track-index" class="track-index">CIRCUIT 01</span
           ><span class="track-weather">☀ 26°</span>
         </div>
-        <h2>Sunset Island<span>→</span></h2>
+        <h2><span id="track-title">Sunset Cliffs</span><span>→</span></h2>
         <div class="track-card-body">
           <canvas
             id="preview-map"
@@ -140,8 +152,10 @@
             aria-label="Plan du circuit"
           ></canvas>
           <div>
-            <span class="pill">PARADIS ARCADE</span>
-            <p>Des palmiers. Des dérapages.<br />Pas de cadeaux.</p>
+            <span id="track-tag" class="pill">FALAISES & ÉPINGLES</span>
+            <p id="track-description">
+              Corniches suspendues et lacets au-dessus du lagon.
+            </p>
             <div class="track-stats">
               <span><b>3</b> TOURS</span
               ><span><b id="track-length">—</b> MÈTRES</span>
@@ -180,6 +194,10 @@
           ><small id="copy-label">COPIER LE CODE →</small>
         </button>
         <div id="room-players" class="room-players"></div>
+        <label class="track-select-row room-track" for="room-track-select"
+          ><span>CIRCUIT <b>CHOIX DE L’HÔTE</b></span
+          ><select id="room-track-select" aria-label="Circuit du salon"></select
+        ></label>
         <div class="room-info">
           <span class="live-dot"></span
           ><span id="room-info"
@@ -199,7 +217,8 @@
         <div class="race-brand">
           <span class="brand-mark">K<span>→</span></span
           ><span
-            >SUNSET ISLAND<small id="mode-label">COURSE RAPIDE</small></span
+            ><b id="race-track-name">SUNSET CLIFFS</b
+            ><small id="mode-label">COURSE RAPIDE</small></span
           >
         </div>
         <div class="lap-display">
@@ -232,7 +251,7 @@
           height="300"
           aria-label="Mini-carte et positions des pilotes"
         ></canvas
-        ><span>SUNSET ISLAND <b>→</b></span>
+        ><span><span id="map-track-name">SUNSET CLIFFS</span> <b>→</b></span>
       </div>
       <div class="speed-block">
         <div>
@@ -255,6 +274,12 @@
         <span><kbd>ÉCHAP</kbd> PAUSE</span>
       </div>
       <div id="countdown" class="countdown" aria-live="assertive"></div>
+      <div id="respawn-overlay" class="respawn-overlay hidden" role="status">
+        <span>PERTE DE CONTACT</span><strong>Retour en piste</strong
+        ><b id="respawn-timer">2,5 s</b
+        ><small>Réapparition au dernier passage valide</small>
+      </div>
+      <div id="wrong-way" class="wrong-way hidden">↶ CONTRESENS</div>
       <div id="race-message" class="race-message"></div>
       <div id="boost-fx" class="boost-fx"></div>
       <div class="touch-controls">
@@ -265,6 +290,7 @@
           </button>
         </div>
         <div class="touch-actions">
+          <button data-control="reset" aria-label="Replacer le kart">R</button>
           <button data-control="drift">DRIFT</button
           ><button data-control="use">OBJET</button
           ><button data-control="brake">FREIN</button
@@ -282,6 +308,16 @@
         <div class="eyebrow">ARRÊT AU STAND</div>
         <h2 id="pause-title">On souffle ?</h2>
         <p id="pause-info">Votre kart vous attend. Le podium aussi.</p>
+        <label class="pause-quality"
+          >Qualité graphique<select
+            id="race-quality-select"
+            aria-label="Qualité graphique en course"
+          >
+            <option value="high">Cinéma · HDR + bloom</option>
+            <option value="balanced">Équilibré · HDR + bloom</option>
+            <option value="low">Léger · rendu direct</option>
+          </select></label
+        >
         <button id="resume" class="button button-primary">
           Retour sur la piste <span>→</span></button
         ><button id="quit-race" class="button button-outline">
@@ -314,8 +350,9 @@
       <div class="eyebrow">LE PETIT BRIEF</div>
       <h2>Simple à prendre.<br />Dur à lâcher.</h2>
       <p>
-        Trois tours pour monter sur le podium. Le circuit vous accompagne dans
-        les virages ; choisissez votre trajectoire et vos coups bas.
+        Trois tours, quatre circuits, aucune assistance. Votre kart garde son
+        cap si vous ne tournez pas. Freinez avant les épingles et méfiez-vous
+        des corniches : une chute entraîne un rappel de 2,5 secondes.
       </p>
       <div class="controls-table">
         <span>Accélérer / Freiner</span
@@ -325,6 +362,8 @@
         ><span>Déraper + mini-turbo</span><span>Tourner + <kbd>MAJ</kbd></span
         ><span>Utiliser l’objet</span><span><kbd>ESPACE</kbd></span
         ><span>Pause / Son</span><span><kbd>ÉCHAP</kbd> / <kbd>M</kbd></span>
+        <span>Replacer le kart · 2,5 s</span
+        ><span><kbd>R</kbd> ou Y manette</span>
       </div>
       <p class="help-tip">
         Manette : RT / A pour accélérer, LT pour freiner, stick gauche pour

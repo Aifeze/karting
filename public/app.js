@@ -4,16 +4,18 @@ import {
   ITEMS,
   COLORS,
   LAPS,
-  TRACK_LENGTH,
+  getTrack,
   clamp,
 } from "./shared.js";
 import { World, drawMap } from "./world.js";
 import { AudioEngine } from "./audio.js";
+import { TRACKS } from "./tracks.js";
 
 const $ = (id) => document.getElementById(id);
 const audio = new AudioEngine();
 const keys = new Set(),
   touch = new Set();
+const pendingActions = new Set();
 let world,
   race = null,
   mode = "home",
@@ -26,16 +28,19 @@ let lastTime = performance.now(),
   accumulator = 0,
   lastHud = 0,
   lastSend = 0,
+  lastRender = 0,
   lastCountdown = "",
   leaderboardSignature = "",
   toastTimeout,
   messageTimeout;
 let selectedColor = COLORS[0];
+let selectedTrack = "sunset";
 try {
   $("nickname").value = localStorage.getItem("kart-name") || "Pilote";
   selectedColor = COLORS.includes(localStorage.getItem("kart-color"))
     ? localStorage.getItem("kart-color")
     : COLORS[0];
+  selectedTrack = getTrack(localStorage.getItem("kart-track")).id;
 } catch {
   /* Le stockage privé peut être indisponible. */
 }
@@ -70,7 +75,7 @@ function profile() {
   } catch {
     /* Facultatif. */
   }
-  return { name, color: selectedColor };
+  return { name, color: selectedColor, trackId: selectedTrack };
 }
 COLORS.slice(0, 5).forEach((color, i) => {
   const b = document.createElement("button");
@@ -92,12 +97,67 @@ COLORS.slice(0, 5).forEach((color, i) => {
   });
   $("colors").append(b);
 });
-$("track-length").textContent = Math.round(TRACK_LENGTH);
-drawMap($("preview-map"));
+for (const id of ["track-select", "room-track-select"])
+  for (const t of TRACKS) {
+    const option = document.createElement("option");
+    option.value = t.id;
+    option.textContent = `${t.number} — ${t.name} · ${Math.round(getTrack(t.id).length)} m`;
+    $(id).append(option);
+  }
+function trackInfo(id) {
+  const t = getTrack(id);
+  $("track-select").value = id;
+  $("track-title").textContent = t.name;
+  $("track-index").textContent = `CIRCUIT ${t.number}`;
+  $("track-tag").textContent = t.tag;
+  $("track-description").textContent = t.description;
+  $("track-length").textContent = Math.round(t.length);
+  document.querySelector(".track-weather").textContent =
+    t.theme === "city"
+      ? "☾ 02:00"
+      : t.theme === "snow"
+        ? "−8 °C"
+        : t.theme === "lava"
+          ? "54 °C"
+          : "☀ 26 °C";
+  drawMap($("preview-map"), [], "", false, id);
+}
+trackInfo(selectedTrack);
+$("track-select").addEventListener("change", (e) => {
+  selectedTrack = e.target.value;
+  trackInfo(selectedTrack);
+  world?.setTrack(selectedTrack);
+  try {
+    localStorage.setItem("kart-track", selectedTrack);
+  } catch {
+    /* Facultatif. */
+  }
+});
+function qualityChange(value) {
+  world?.setQuality(value);
+  $("quality-select").value = value;
+  $("race-quality-select").value = value;
+  try {
+    localStorage.setItem("kart-quality", value);
+  } catch {
+    /* Facultatif. */
+  }
+}
+for (const id of ["quality-select", "race-quality-select"])
+  $(id).addEventListener("change", (e) => qualityChange(e.target.value));
+$("room-track-select").addEventListener("change", async (e) => {
+  try {
+    await request("setTrack", { trackId: e.target.value });
+  } catch (err) {
+    toast(err.message);
+    if (room) showRoom(room);
+  }
+});
 for (let i = 0; i < 14; i++)
   $("speed-bars").append(document.createElement("i"));
 
 function begin(newRace, isOnline) {
+  pendingActions.clear();
   online = isOnline;
   myId = isOnline ? socket.id : "local";
   race = newRace;
@@ -121,10 +181,16 @@ function begin(newRace, isOnline) {
     : "COURSE RAPIDE · SOLO";
   $("total-racers").textContent = String(race.players.length).padStart(2, "0");
   $("countdown").textContent = "3";
+  world.setTrack(race.trackId);
+  const track = getTrack(race.trackId);
+  $("race-track-name").textContent = track.name.toUpperCase();
+  $("map-track-name").textContent = track.name.toUpperCase();
+  $("world").setAttribute("aria-label", `Circuit 3D ${track.name}`);
   world.setMode("race", selectedColor);
   updateHud();
 }
 function home(leave = true) {
+  pendingActions.clear();
   if (leave && socket && online) socket.emit("leaveRoom");
   race = null;
   room = null;
@@ -141,6 +207,7 @@ function home(leave = true) {
   document.body.classList.remove("racing");
   document.body.dataset.phase = "home";
   world?.setMode("home");
+  world?.setTrack(selectedTrack);
   audio.update(null, false);
 }
 function quickPlay() {
@@ -148,7 +215,7 @@ function quickPlay() {
   const p = profile();
   if (socket && room) socket.emit("leaveRoom");
   room = null;
-  begin(createRace([{ ...p, id: "local" }]), false);
+  begin(createRace([{ ...p, id: "local" }], Date.now(), selectedTrack), false);
 }
 $("quick-play").addEventListener("click", quickPlay);
 async function connected() {
@@ -245,6 +312,9 @@ function showRoom(data) {
   $("room-screen").classList.remove("hidden");
   $("display-code").textContent = room.code;
   const isHost = socket.id === room.host;
+  $("room-track-select").value = room.trackId;
+  $("room-track-select").disabled = !isHost;
+  world?.setTrack(room.trackId);
   $("start-race").disabled = !isHost;
   $("start-race").textContent = isHost
     ? `Lancer la course · ${Math.max(4, room.players.length)} pilotes →`
@@ -297,7 +367,8 @@ socket?.on("backToRoom", (data) => {
   home(false);
   showRoom(data);
 });
-socket?.on("disconnect", () => {
+socket?.on("disconnect", (reason) => {
+  console.info("Multijoueur déconnecté :", reason);
   if (online) {
     home(false);
     toast(
@@ -331,11 +402,19 @@ function getInput() {
     drift ||= !!pad.buttons[1]?.pressed;
     use ||= !!pad.buttons[2]?.pressed;
   }
-  return { throttle, brake, steer: clamp(steer, -1, 1), drift, use };
+  return {
+    throttle,
+    brake,
+    steer: clamp(steer, -1, 1),
+    drift,
+    use,
+    reset: has("KeyR") || touch.has("reset") || !!pad?.buttons[3]?.pressed,
+  };
 }
 function setPaused(value) {
   if (mode !== "race" || resultsShown) return;
   paused = value;
+  pendingActions.clear();
   keys.clear();
   touch.clear();
   $("pause-screen").classList.toggle("hidden", !value);
@@ -377,6 +456,17 @@ $("sound-button").addEventListener("click", soundToggle);
 window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (
+    !e.repeat &&
+    mode === "race" &&
+    !paused &&
+    race?.phase === "racing" &&
+    !resultsShown &&
+    !$("help-dialog").open
+  ) {
+    if (e.code === "Space") pendingActions.add("use");
+    if (e.code === "KeyR") pendingActions.add("reset");
+  }
+  if (
     mode === "race" &&
     [
       "Space",
@@ -417,6 +507,8 @@ document.querySelectorAll("[data-control]").forEach((button) => {
     e.preventDefault();
     button.setPointerCapture(e.pointerId);
     touch.add(button.dataset.control);
+    if (["use", "reset"].includes(button.dataset.control))
+      pendingActions.add(button.dataset.control);
     button.classList.add("pressed");
   });
   for (const name of ["pointerup", "pointercancel", "lostpointercapture"])
@@ -446,17 +538,33 @@ function updateHud() {
   if (!p) return;
   $("speed").textContent = Math.round(p.speed * 3.6);
   $("gear").textContent =
-    p.speed < 1 ? "N" : Math.min(6, Math.floor(p.speed / 7) + 1);
+    p.forwardSpeed < -1
+      ? "R"
+      : p.speed < 1
+        ? "N"
+        : Math.min(6, Math.floor(p.speed / 7) + 1);
   $("position").textContent = String(p.rank).padStart(2, "0");
   $("lap").replaceChildren(document.createTextNode(`${p.lap} `));
   const lapTotal = document.createElement("i");
   lapTotal.textContent = `/ ${LAPS}`;
   $("lap").append(lapTotal);
   $("timer").textContent = formatTime(p.finishTime ?? race.elapsed);
-  $("drive-status").textContent =
-    p.stun > 0
+  const track = getTrack(race.trackId);
+  $("respawn-overlay").classList.toggle("hidden", !p.falling);
+  $("respawn-timer").textContent = `${Math.max(
+    0,
+    (p.respawnAt || 0) - race.clock,
+  )
+    .toFixed(1)
+    .replace(".", ",")} s`;
+  $("hud").dataset.falling = p.falling;
+  $("hud").dataset.respawns = p.respawns;
+  $("wrong-way").classList.toggle("hidden", !p.wrongWay || p.falling);
+  $("drive-status").textContent = p.falling
+    ? "CHUTE · RAPPEL EN COURS"
+    : p.stun > 0
       ? "TÊTE À QUEUE"
-      : Math.abs(p.offset) > 9
+      : Math.abs(p.offset) > track.halfWidth
         ? "HORS-PISTE"
         : p.boosting > 0
           ? "TURBO ENGAGÉ ϟ"
@@ -496,7 +604,7 @@ function updateHud() {
       $("leaderboard").append(row);
     }
   }
-  drawMap($("minimap"), race.players, myId, true);
+  drawMap($("minimap"), race.players, myId, true, race.trackId);
   const count =
     race.phase === "countdown"
       ? String(Math.max(1, Math.ceil(race.countdown)))
@@ -582,6 +690,14 @@ async function init() {
     }
     world = new World(THREE, $("world"));
     world.color = selectedColor;
+    world.setTrack(selectedTrack);
+    let quality = innerWidth < 600 ? "balanced" : "high";
+    try {
+      quality = localStorage.getItem("kart-quality") || quality;
+    } catch {
+      /* Facultatif. */
+    }
+    qualityChange(quality);
     document.body.dataset.webgl = "ready";
     document.body.dataset.phase = "home";
     $("loading").style.opacity = "0";
@@ -604,20 +720,32 @@ async function init() {
   }
 }
 function frame(now) {
-  const dt = Math.min((now - lastTime) / 1000, 0.08);
+  const elapsed = Math.max(0, (now - lastTime) / 1000);
   lastTime = now;
   const input = getInput();
   if (mode === "race" && race) {
     if (!online && !paused && !$("help-dialog").open) {
-      accumulator += dt;
+      // Le rendu peut ralentir ; le temps de course et le rappel de 2,5 s
+      // restent en secondes réelles. Les intégrations gardent un pas de 1/60 s.
+      accumulator += elapsed;
       while (accumulator >= 1 / 60) {
-        stepRace(race, { [myId]: input }, 1 / 60);
+        const lastStep = accumulator < 2 / 60;
+        const applied = { ...input };
+        for (const action of pendingActions) applied[action] = lastStep;
+        stepRace(race, { [myId]: applied }, 1 / 60);
         handleEvents(race.events);
         accumulator -= 1 / 60;
+        if (lastStep) pendingActions.clear();
       }
     }
     if (online && now - lastSend > 1000 / 30) {
-      socket.emit("input", input);
+      socket.emit("input", {
+        ...input,
+        ...Object.fromEntries(
+          [...pendingActions].map((action) => [action, true]),
+        ),
+      });
+      pendingActions.clear();
       lastSend = now;
     }
     if (now - lastHud > 75) {
@@ -626,7 +754,19 @@ function frame(now) {
     }
     audio.update(player(), !paused && !resultsShown && race.phase === "racing");
   }
-  world.update(race, myId, input, dt, now / 1000);
+  // Les salons et onglets cachés ne doivent pas monopoliser le GPU ; le réseau
+  // et la simulation continuent indépendamment du rendu.
+  const renderInterval = mode === "race" && !paused ? 0 : 1000 / 24;
+  if (!document.hidden && now - lastRender >= renderInterval) {
+    world.update(
+      race,
+      myId,
+      input,
+      Math.min((now - lastRender) / 1000, 0.1),
+      now / 1000,
+    );
+    lastRender = now;
+  }
   requestAnimationFrame(frame);
 }
 init();

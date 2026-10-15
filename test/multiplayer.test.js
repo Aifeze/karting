@@ -28,6 +28,7 @@ test(
     const url = `http://127.0.0.1:${game.http.address().port}`;
     const a = client(url, { transports: ["websocket"] }),
       b = client(url, { transports: ["websocket"] });
+    let inputTimer;
     try {
       await Promise.all([
         new Promise((resolve) => a.on("connect", resolve)),
@@ -49,14 +50,26 @@ test(
         name: "Banane",
       });
       assert.equal(joined.room.players.length, 2);
+      assert.ok((await b.emitWithAck("setTrack", { trackId: "neon" })).error);
+      assert.ok(
+        (await a.emitWithAck("setTrack", { trackId: "unknown" })).error,
+      );
+      const selected = until(b, "room", (data) => data.trackId === "neon");
+      assert.equal(
+        (await a.emitWithAck("setTrack", { trackId: "neon" })).ok,
+        true,
+      );
+      assert.equal((await selected).trackId, "neon");
       assert.ok((await b.emitWithAck("startRace")).error);
       const startB = until(b, "raceStart", () => true);
       assert.equal((await a.emitWithAck("startRace")).ok, true);
-      assert.equal((await startB).players.length, 4);
+      const initial = await startB;
+      assert.equal(initial.players.length, 4);
+      assert.equal(initial.trackId, "neon");
       assert.ok((await b.emitWithAck("joinRoom", { code: room.code })).error);
       await until(a, "state", (r) => r.phase === "racing");
       a.emit("input", null); // Aucune exception du serveur sur un message malformé.
-      const inputTimer = setInterval(() => {
+      inputTimer = setInterval(() => {
         a.emit("input", { throttle: 1 });
         b.emit("input", { throttle: 1, steer: 0.2 });
       }, 30);
@@ -68,7 +81,28 @@ test(
           r.players.find((p) => p.id === b.id).speed > 7,
       );
       clearInterval(inputTimer);
-      assert.ok(state.players.find((p) => p.id === a.id).s > -9);
+      assert.ok(
+        state.players.find((p) => p.id === a.id).s >
+          initial.players.find((p) => p.id === a.id).s + 0.5,
+      );
+      a.emit("input", { reset: true });
+      const fall = await until(
+        a,
+        "state",
+        (r) => r.players.find((p) => p.id === a.id).falling,
+      );
+      const startTime = performance.now();
+      const returned = await until(
+        a,
+        "state",
+        (r) => r.players.find((p) => p.id === a.id).respawns === 1,
+      );
+      assert.ok(
+        Math.abs((performance.now() - startTime) / 1000 - 2.5) < 0.12,
+        "le délai réseau suit les secondes réelles",
+      );
+      assert.ok(Math.abs(returned.clock - fall.clock - 2.5) < 1e-8);
+      assert.ok(returned.players.find((p) => p.id === a.id).invulnerable > 0);
       const oldA = a.id,
         hostChange = until(b, "room", (r) => r.host === b.id);
       a.disconnect();
@@ -83,6 +117,7 @@ test(
       await new Promise((resolve) => setTimeout(resolve, 60));
       assert.equal(game.rooms.size, 0);
     } finally {
+      clearInterval(inputTimer);
       a.disconnect();
       b.disconnect();
       await new Promise((resolve) => game.io.close(resolve));

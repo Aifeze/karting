@@ -25,9 +25,17 @@ const context = await browser.newContext({
 });
 // Vérifie aussi le repli CDN, utile en environnement isolé.
 await context.route("**/cdn.jsdelivr.net/**", (route) => route.abort());
-async function page() {
+async function page(viewport) {
   const p = await context.newPage();
+  if (viewport) await p.setViewportSize(viewport);
   p.on("pageerror", (e) => errors.push(e.message));
+  p.on("console", (m) => {
+    if (
+      m.type() === "error" &&
+      /WebGLProgram|VALIDATE_STATUS|INVALID_OPERATION/.test(m.text())
+    )
+      errors.push(m.text());
+  });
   await p.goto(url);
   await p.waitForSelector('body[data-webgl="ready"]');
   await p.waitForSelector("#loading.hidden", { state: "attached" });
@@ -42,6 +50,14 @@ try {
     "le formulaire entier reste dans la fenêtre",
   );
   await a.screenshot({ path: "test-results/home.png" });
+  await a.locator("#quality-select").selectOption("balanced");
+  for (const id of ["neon", "volcano", "alpine"]) {
+    await a.locator("#track-select").selectOption(id);
+    await a.waitForSelector(`body[data-track="${id}"]`);
+    await a.screenshot({ path: `test-results/track-${id}.png` });
+  }
+  await a.locator("#quality-select").selectOption("low");
+  await a.setViewportSize({ width: 1100, height: 760 });
   await a.getByRole("button", { name: "Afficher les commandes" }).click();
   assert.ok(await a.locator("#help-dialog").isVisible());
   await a.getByRole("button", { name: "Fermer", exact: true }).click();
@@ -54,6 +70,10 @@ try {
   );
   await a.keyboard.up("ArrowUp");
   await a.screenshot({ path: "test-results/cockpit.png" });
+  await a.keyboard.press("KeyR");
+  await a.waitForSelector("#respawn-overlay:not(.hidden)");
+  await a.waitForSelector('#hud[data-respawns="1"]');
+  assert.equal(await a.locator("#respawn-overlay").isVisible(), false);
   await a.keyboard.press("Escape");
   assert.ok(await a.locator("#pause-screen").isVisible());
   await a.locator("#resume").click();
@@ -62,11 +82,16 @@ try {
   await a.locator("#create-room").click();
   await a.waitForSelector("#room-screen:not(.hidden)");
   const code = await a.locator("#display-code").textContent();
-  const b = await page();
+  await a.locator("#room-track-select").selectOption("neon");
+  await a.waitForSelector('body[data-track="neon"]');
+  const b = await page({ width: 960, height: 720 });
   await b.locator("#nickname").fill("Mochi");
   await b.locator("#room-code").fill(code);
   await b.locator("#join-form button").click();
   await b.waitForSelector("#room-screen:not(.hidden)");
+  assert.equal(await b.locator("#room-track-select").inputValue(), "neon");
+  assert.equal(await b.locator("#room-track-select").isDisabled(), true);
+  await b.locator("#quality-select").selectOption("low");
   await a.waitForFunction(
     () => document.querySelectorAll(".room-player").length === 2,
   );
@@ -77,9 +102,13 @@ try {
     b.waitForSelector("#hud:not(.hidden)"),
   ]);
   assert.match(await b.locator("#mode-label").textContent(), new RegExp(code));
+  assert.equal(await b.getAttribute("body", "data-track"), "neon");
   await a.screenshot({ path: "test-results/multiplayer.png" });
   await a.locator("#pause-button").click();
   await a.locator("#quit-race").click();
+  // Le mobile représente un troisième appareil, pas un troisième renderer
+  // concurrent sur le même GPU logiciel de CI.
+  await context.close();
   const mobile = await browser.newContext({
     viewport: { width: 390, height: 844 },
     isMobile: true,
@@ -106,8 +135,41 @@ try {
   await mobile.close();
   assert.deepEqual(errors, []);
   console.log(
-    "Navigateur : accueil, aide, conduite, pause, salon à deux, départ et mobile validés.",
+    "Navigateur : quatre environnements HDR, conduite, rappel, pause, circuit synchronisé à deux joueurs et mobile validés.",
   );
+} catch (error) {
+  for (const [index, p] of browser
+    .contexts()
+    .flatMap((c) => c.pages())
+    .entries()) {
+    console.log(
+      "Diagnostic navigateur",
+      index,
+      await p
+        .evaluate(() => ({
+          phase: document.body.dataset.phase,
+          track: document.body.dataset.track,
+          toast: document.getElementById("toast").textContent,
+          hudHidden: document
+            .getElementById("hud")
+            .classList.contains("hidden"),
+        }))
+        .catch(() => "page fermée"),
+    );
+    await p
+      .screenshot({ path: `test-results/failure-${index}.png`, timeout: 5000 })
+      .catch(() => {});
+  }
+  console.log("Erreurs JavaScript/WebGL", errors);
+  console.log(
+    "Salons actifs",
+    [...game.rooms.values()].map((r) => ({
+      code: r.code,
+      players: r.players.size,
+      racing: !!r.race,
+    })),
+  );
+  throw error;
 } finally {
   await browser.close();
   await new Promise((resolve) => game.io.close(resolve));

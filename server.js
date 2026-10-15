@@ -10,7 +10,9 @@ import {
   snapshot,
   sanitizeInput,
   COLORS,
+  getTrack,
 } from "./public/shared.js";
+import { TRACKS } from "./public/tracks.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -26,7 +28,12 @@ export function createGameServer() {
     next();
   });
   app.get("/health", (_req, res) =>
-    res.json({ status: "ok", rooms: rooms.size }),
+    res.json({
+      status: "ok",
+      rooms: rooms.size,
+      tracks: TRACKS.length,
+      physics: "manual",
+    }),
   );
   // Repli local si le CDN est indisponible ; aucune étape de compilation.
   app.get("/vendor/three.module.js", (_req, res) =>
@@ -40,6 +47,7 @@ export function createGameServer() {
     code: room.code,
     host: room.host,
     racing: !!room.race,
+    trackId: room.trackId,
     players: [...room.players.values()],
   });
   const announce = (room) => io.to(room.code).emit("room", publicRoom(room));
@@ -94,6 +102,7 @@ export function createGameServer() {
         players: new Map([[socket.id, profile(data)]]),
         inputs: {},
         race: null,
+        trackId: getTrack(data?.trackId).id,
       };
       rooms.set(code, room);
       socket.data.room = code;
@@ -129,7 +138,11 @@ export function createGameServer() {
       if (!room || room.host !== socket.id)
         return reply({ error: "Seul l’hôte peut lancer le départ." });
       if (room.race) return reply({ error: "La course est déjà lancée." });
-      room.race = createRace([...room.players.values()]);
+      room.race = createRace(
+        [...room.players.values()],
+        Date.now(),
+        room.trackId,
+      );
       room.inputs = {};
       io.to(room.code).emit("raceStart", snapshot(room.race));
       reply({ ok: true });
@@ -141,6 +154,21 @@ export function createGameServer() {
           ...sanitizeInput(data),
           receivedAt: Date.now(),
         };
+    });
+    socket.on("setTrack", (data, reply = () => {}) => {
+      if (typeof reply !== "function") return;
+      const room = rooms.get(socket.data.room);
+      if (!room || room.host !== socket.id)
+        return reply({ error: "Seul l’hôte choisit le circuit." });
+      if (room.race)
+        return reply({
+          error: "Le circuit ne peut pas changer pendant une course.",
+        });
+      if (!TRACKS.some((t) => t.id === data?.trackId))
+        return reply({ error: "Circuit inconnu." });
+      room.trackId = data.trackId;
+      announce(room);
+      reply({ ok: true });
     });
     socket.on("resetRoom", (reply = () => {}) => {
       if (typeof reply !== "function") return;
@@ -163,12 +191,25 @@ export function createGameServer() {
     socket.on("leaveRoom", () => leave(socket));
     socket.on("disconnect", () => leave(socket));
   });
+  let previousTick = performance.now();
+  let accumulator = 0;
   const tick = setInterval(() => {
+    const now = performance.now();
+    accumulator += (now - previousTick) / 1000;
+    previousTick = now;
+    const steps = Math.floor((accumulator + 1e-9) * 30);
+    accumulator -= steps / 30;
     for (const room of rooms.values())
       if (room.race) {
         for (const [id, input] of Object.entries(room.inputs))
           if (Date.now() - input.receivedAt > 750) delete room.inputs[id];
-        stepRace(room.race, room.inputs, 1 / 30);
+        const events = [];
+        for (let step = 0; step < steps; step++) {
+          stepRace(room.race, room.inputs, 1 / 30);
+          events.push(...room.race.events);
+        }
+        if (!steps) continue;
+        room.race.events = events;
         io.to(room.code).emit("state", snapshot(room.race));
       }
   }, 1000 / 30);
