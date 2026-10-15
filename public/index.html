@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f5f1e9" />
+    <meta
+      name="description"
+      content="Votre prochain grand prix entre amis. Un jeu de karting 3D gratuit, en cockpit et directement dans le navigateur."
+    />
+    <title>Kart Club — Les amis d'abord. La victoire aussi.</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <canvas
+      id="world"
+      aria-label="Circuit de karting 3D Sunset Island"
+    ></canvas>
+    <div id="loading" class="loading">
+      <span class="brand-mark">K<span>→</span></span
+      ><strong>On chauffe les pneus<span class="loading-dots">…</span></strong
+      ><small>Direction Sunset Island</small>
+    </div>
+    <header id="header" class="header">
+      <a class="wordmark" href="/" aria-label="Kart Club, accueil"
+        ><span class="brand-mark">K<span>→</span></span
+        >kart club<span class="brand-dot">®</span></a
+      >
+      <div class="header-center">
+        <span class="live-dot"></span> DU FUN. SANS TÉLÉCHARGEMENT.
+      </div>
+      <div class="header-actions">
+        <button
+          id="help-button"
+          class="round-button"
+          aria-label="Afficher les commandes"
+          title="Commandes (H)"
+        >
+          ?</button
+        ><button
+          id="sound-button"
+          class="sound-button"
+          aria-label="Activer le son"
+          title="Activer le son (M)"
+        >
+          <span id="sound-icon">◌</span><span id="sound-label">SON OFF</span>
+        </button>
+      </div>
+    </header>
+
+    <main id="home" class="home">
+      <section class="hero-copy">
+        <div class="eyebrow">
+          <span class="tiny-flag">⚑</span> PETITS KARTS. GRANDES RIVALITÉS.
+        </div>
+        <h1>
+          Les potes.<br />La piste.<br /><span>Le podium.</span
+          ><svg viewBox="0 0 390 25" aria-hidden="true">
+            <path d="M7 17Q180 -3 380 10M33 23Q204 6 355 19" />
+          </svg>
+        </h1>
+        <p>
+          Un virage, un turbo, une amitié en jeu.<br />Votre prochain grand prix
+          commence ici.
+        </p>
+        <div class="play-card">
+          <div class="profile-row">
+            <label class="name-field" for="nickname"
+              ><span>VOTRE PSEUDO</span
+              ><input
+                id="nickname"
+                autocomplete="nickname"
+                maxlength="16"
+                placeholder="Ex. TurboToto"
+                value="Pilote"
+                aria-label="Votre pseudo"
+            /></label>
+            <div class="color-field">
+              <span>VOTRE STYLE</span>
+              <div
+                id="colors"
+                class="colors"
+                role="group"
+                aria-label="Couleur du kart"
+              ></div>
+            </div>
+          </div>
+          <button id="quick-play" class="button button-primary">
+            <span>Course rapide <small>SOLO + BOTS</small></span
+            ><span class="button-arrow">→</span>
+          </button>
+          <div class="or"><span>OU RAMENEZ LA BANDE</span></div>
+          <div class="friends-row">
+            <button id="create-room" class="button button-outline">
+              Créer un salon <span>＋</span>
+            </button>
+            <form id="join-form" class="join-form">
+              <input
+                id="room-code"
+                maxlength="5"
+                pattern="[A-Za-z2-9]{5}"
+                placeholder="Code ami"
+                aria-label="Code du salon de votre ami"
+                required
+                autocomplete="off"
+              /><button aria-label="Rejoindre le salon" title="Rejoindre">
+                →
+              </button>
+            </form>
+          </div>
+          <div class="card-foot">
+            <span class="live-dot"></span> 1 à 8 pilotes <span>·</span> Gratuit
+            <span>·</span> Sans inscription
+          </div>
+        </div>
+        <div class="input-hint">
+          <span class="key-group"
+            ><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></span
+          >
+          CLAVIER <span class="hint-plus">+</span
+          ><span class="controller-symbol">♧</span> MANETTE
+          <span class="hint-plus">+</span> TACTILE
+        </div>
+      </section>
+      <aside class="track-card">
+        <div class="track-card-top">
+          <span class="track-index">CIRCUIT 01</span
+          ><span class="track-weather">☀ 26°</span>
+        </div>
+        <h2>Sunset Island<span>→</span></h2>
+        <div class="track-card-body">
+          <canvas
+            id="preview-map"
+            width="180"
+            height="150"
+            aria-label="Plan du circuit"
+          ></canvas>
+          <div>
+            <span class="pill">PARADIS ARCADE</span>
+            <p>Des palmiers. Des dérapages.<br />Pas de cadeaux.</p>
+            <div class="track-stats">
+              <span><b>3</b> TOURS</span
+              ><span><b id="track-length">—</b> MÈTRES</span>
+            </div>
+          </div>
+        </div>
+        <div class="track-card-foot">
+          <span class="difficulty-dots">● ● ● <i>● ●</i></span> JUSTE ASSEZ POUR
+          SE CHAMBRER
+        </div>
+      </aside>
+      <div class="hero-sticker">
+        <span>100%</span> BONNES<br />
+        MAUVAISES IDÉES
+        <svg viewBox="0 0 50 38" aria-hidden="true">
+          <path d="M5 3Q5 27 40 23M30 11L43 24L28 35" />
+        </svg>
+      </div>
+    </main>
+    <footer id="footer">
+      <span>FAIT POUR LES AMIS. SURTOUT LES MAUVAIS PERDANTS.</span
+      ><span>CE SOIR, C’EST VOUS LE PILOTE. <span>→</span></span>
+    </footer>
+
+    <section
+      id="room-screen"
+      class="overlay hidden"
+      aria-labelledby="room-title"
+    >
+      <div class="panel room-panel">
+        <div class="eyebrow">LE PADDOCK / MULTIJOUEUR</div>
+        <h2 id="room-title">La bande se prépare.</h2>
+        <p>Partagez ce code. Réglez les comptes sur la piste.</p>
+        <button id="copy-code" class="room-code-display" title="Copier le code">
+          <span id="display-code">ABCDE</span
+          ><small id="copy-label">COPIER LE CODE →</small>
+        </button>
+        <div id="room-players" class="room-players"></div>
+        <div class="room-info">
+          <span class="live-dot"></span
+          ><span id="room-info"
+            >Les places libres seront complétées par des bots.</span
+          >
+        </div>
+        <button id="start-race" class="button button-primary">
+          Tout le monde en piste <span>→</span></button
+        ><button id="leave-room" class="text-button">
+          ← Retour à l’accueil
+        </button>
+      </div>
+    </section>
+
+    <section id="hud" class="hud hidden" aria-label="Tableau de bord de course">
+      <div class="race-top">
+        <div class="race-brand">
+          <span class="brand-mark">K<span>→</span></span
+          ><span
+            >SUNSET ISLAND<small id="mode-label">COURSE RAPIDE</small></span
+          >
+        </div>
+        <div class="lap-display">
+          <span>TOUR</span><b id="lap">1 <i>/ 3</i></b>
+        </div>
+        <div class="race-timer">
+          <span>TEMPS</span><b id="timer">00:00.000</b>
+        </div>
+        <button
+          id="pause-button"
+          class="round-button"
+          aria-label="Mettre en pause"
+          title="Pause (Échap)"
+        >
+          II
+        </button>
+      </div>
+      <div class="position-block">
+        <div class="position-number">
+          <b id="position">01</b
+          ><span>/ <span id="total-racers">04</span></span>
+        </div>
+        <div class="eyebrow">POSITION</div>
+        <div id="leaderboard" class="leaderboard"></div>
+      </div>
+      <div class="minimap-wrap">
+        <canvas
+          id="minimap"
+          width="300"
+          height="300"
+          aria-label="Mini-carte et positions des pilotes"
+        ></canvas
+        ><span>SUNSET ISLAND <b>→</b></span>
+      </div>
+      <div class="speed-block">
+        <div>
+          <b id="speed">0</b><span>KM/H<small id="gear">N</small></span>
+        </div>
+        <div class="speed-bars" id="speed-bars"></div>
+        <small id="drive-status">PRÊT À PARTIR</small>
+      </div>
+      <div class="item-block">
+        <div id="item-icon" class="item-icon">?</div>
+        <div>
+          <span class="eyebrow">VOTRE OBJET</span
+          ><strong id="item-name">À vous de jouer</strong
+          ><small><kbd>ESPACE</kbd> UTILISER</small>
+        </div>
+      </div>
+      <div class="race-bottom">
+        <span><kbd>⇧</kbd> DRIFT <span>→</span> MINI-TURBO</span>
+        <div class="drift-meter"><i id="drift-charge"></i></div>
+        <span><kbd>ÉCHAP</kbd> PAUSE</span>
+      </div>
+      <div id="countdown" class="countdown" aria-live="assertive"></div>
+      <div id="race-message" class="race-message"></div>
+      <div id="boost-fx" class="boost-fx"></div>
+      <div class="touch-controls">
+        <div class="touch-steer">
+          <button data-control="left" aria-label="Tourner à gauche">◀</button
+          ><button data-control="right" aria-label="Tourner à droite">
+            ▶
+          </button>
+        </div>
+        <div class="touch-actions">
+          <button data-control="drift">DRIFT</button
+          ><button data-control="use">OBJET</button
+          ><button data-control="brake">FREIN</button
+          ><button data-control="gas" class="gas">GO</button>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="pause-screen"
+      class="overlay hidden"
+      aria-labelledby="pause-title"
+    >
+      <div class="panel small-panel">
+        <div class="eyebrow">ARRÊT AU STAND</div>
+        <h2 id="pause-title">On souffle ?</h2>
+        <p id="pause-info">Votre kart vous attend. Le podium aussi.</p>
+        <button id="resume" class="button button-primary">
+          Retour sur la piste <span>→</span></button
+        ><button id="quit-race" class="button button-outline">
+          Quitter la course
+        </button>
+      </div>
+    </section>
+    <section
+      id="results-screen"
+      class="overlay hidden"
+      aria-labelledby="results-title"
+    >
+      <div class="panel results-panel">
+        <div class="eyebrow">DRAPEAU À DAMIER</div>
+        <div class="finish-icon">⚑</div>
+        <h2 id="results-title">Bien joué, pilote.</h2>
+        <p id="results-subtitle"></p>
+        <div id="results-list" class="results-list"></div>
+        <button id="play-again" class="button button-primary">
+          Encore un tour ? <span>→</span></button
+        ><button id="results-home" class="text-button">
+          Retour à l’accueil
+        </button>
+      </div>
+    </section>
+    <dialog id="help-dialog" class="panel help-panel">
+      <button id="close-help" class="close-button" aria-label="Fermer">
+        ×
+      </button>
+      <div class="eyebrow">LE PETIT BRIEF</div>
+      <h2>Simple à prendre.<br />Dur à lâcher.</h2>
+      <p>
+        Trois tours pour monter sur le podium. Le circuit vous accompagne dans
+        les virages ; choisissez votre trajectoire et vos coups bas.
+      </p>
+      <div class="controls-table">
+        <span>Accélérer / Freiner</span
+        ><span><kbd>↑</kbd> / <kbd>↓</kbd> ou <kbd>Z</kbd> / <kbd>S</kbd></span
+        ><span>Tourner</span
+        ><span><kbd>←</kbd> / <kbd>→</kbd> ou <kbd>Q</kbd> / <kbd>D</kbd></span
+        ><span>Déraper + mini-turbo</span><span>Tourner + <kbd>MAJ</kbd></span
+        ><span>Utiliser l’objet</span><span><kbd>ESPACE</kbd></span
+        ><span>Pause / Son</span><span><kbd>ÉCHAP</kbd> / <kbd>M</kbd></span>
+      </div>
+      <p class="help-tip">
+        Manette : RT / A pour accélérer, LT pour freiner, stick gauche pour
+        tourner, B pour déraper et X pour l’objet.
+      </p>
+      <div class="help-items">
+        <span>ϟ <b>Turbo</b></span
+        ><span>◡ <b>Banane</b></span
+        ><span>⬡ <b>Carapaces</b></span>
+      </div>
+      <p class="help-tip">
+        Les bandes cyan vous propulsent. L’huile et l’herbe vous ralentissent.
+        Chargez le drift jusqu’au cyan pour un plus gros turbo !
+      </p>
+    </dialog>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

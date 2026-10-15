@@ -1,0 +1,25 @@
+{
+  "name": "kart-club",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Karting arcade 3D en cockpit, en solo ou entre amis.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js",
+    "test:browser": "node test/browser.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0",
+    "socket.io-client": "^4.8.1"
+  }
+}
